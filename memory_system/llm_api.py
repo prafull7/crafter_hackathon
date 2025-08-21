@@ -1,18 +1,63 @@
 from typing import Any
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 import re
 import tiktoken
 from .utils import print_color
 from pydantic import BaseModel, Field
-from typing import Union, Literal
+from typing import Union, Literal, Optional
 import time
 from openai import APITimeoutError
+import os
 
-client = AzureOpenAI(
-  azure_endpoint = " ",
-  api_key=" ",  
-  api_version=" "
-)
+_HF_PIPELINE = None
+_HF_TOKENIZER = None
+_HF_GENERATION_KWARGS = {
+    "max_new_tokens": 512,
+    "temperature": 0.7,
+    "do_sample": True,
+}
+
+DEFAULT_MODEL = "gpt-4"
+
+# Lazily initialize Azure client only if environment is configured
+_AZURE_CLIENT = None
+
+def _azure_configured() -> bool:
+    return bool(
+        os.environ.get("AZURE_OPENAI_ENDPOINT")
+        and os.environ.get("AZURE_OPENAI_API_KEY")
+        and os.environ.get("AZURE_OPENAI_API_VERSION")
+    )
+
+def _openai_configured() -> bool:
+    return bool(os.environ.get("OPENAI_API_KEY"))
+
+def _init_azure():
+    global _AZURE_CLIENT
+    if _AZURE_CLIENT is not None:
+        return _AZURE_CLIENT
+    if not _azure_configured():
+        return None
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT").strip()
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY").strip()
+    api_version = os.environ.get("AZURE_OPENAI_API_VERSION").strip()
+    _AZURE_CLIENT = AzureOpenAI(
+        azure_endpoint=endpoint,
+        api_key=api_key,
+        api_version=api_version,
+    )
+    return _AZURE_CLIENT
+
+_OPENAI_CLIENT = None
+
+def _init_openai():
+    global _OPENAI_CLIENT
+    if _OPENAI_CLIENT is not None:
+        return _OPENAI_CLIENT
+    if not _openai_configured():
+        return None
+    _OPENAI_CLIENT = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    return _OPENAI_CLIENT
 
 from enum import Enum
 
@@ -187,19 +232,277 @@ I [current action: made/placed/navigated/ate/shared] a [current object] because 
     #                         "The whole summary act as a note for the next episode, so use past tense for everything; Avoid using 'next' to describe action because it would be done by next time step.")
     # )
     
-def get_completion(messages, model="gpt-4o"):
+def _init_hf(model_name: str):
+    global _HF_PIPELINE, _HF_TOKENIZER
+    if _HF_PIPELINE is not None:
+        return
+    try:
+        from transformers import AutoTokenizer, pipeline
+        _HF_TOKENIZER = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        _HF_PIPELINE = pipeline(
+            "text-generation",
+            model=model_name,
+            tokenizer=_HF_TOKENIZER,
+            torch_dtype="auto",
+            device_map="auto",
+            trust_remote_code=True,
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to initialize HuggingFace model '{model_name}': {e}\n"
+            "If running offline, make sure the model is cached or set HF_HOME/HF_DATASETS_CACHE."
+        )
+
+
+def _hf_chat(messages, model_name: str):
+    if _HF_PIPELINE is None:
+        _init_hf(model_name)
+    # Simple prompt stitching for instruct models
+    system_parts = []
+    user_parts = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if isinstance(content, list):
+            # If there are images or structured parts, reduce to text for HF baseline
+            text_chunks = []
+            for part in content:
+                if isinstance(part, dict) and "text" in part:
+                    text_chunks.append(part["text"])
+            content = "\n".join(text_chunks)
+        if role == "system":
+            system_parts.append(str(content))
+        elif role == "user":
+            user_parts.append(str(content))
+        elif role == "assistant":
+            user_parts.append(str(content))
+    prompt = "\n".join(["\n".join(system_parts), "\n".join(user_parts)]).strip()
+    outputs = _HF_PIPELINE(prompt, **_HF_GENERATION_KWARGS)
+    import pdb; pdb.set_trace()
+    return outputs[0]["generated_text"][len(prompt):].strip()
+
+
+def init_model(model_name: Optional[str]):
+    """Initialize default LLM backend from a model string.
+
+    - "gpt-4o" uses Azure OpenAI client defined above.
+    - "hf:<repo>" or a plain repo id initializes a HuggingFace text-generation pipeline.
+    """
+    global DEFAULT_MODEL
+    if model_name and model_name != DEFAULT_MODEL:
+        DEFAULT_MODEL = model_name
+        if model_name.startswith("hf:") or "/" in model_name:
+            repo_id = model_name.split(":", 1)[1] if model_name.startswith("hf:") else model_name
+            if repo_id == "":
+                repo_id = os.environ.get("HF_MODEL_NAME", "")
+                if not repo_id:
+                    raise ValueError("HF model not specified. Pass model=\"hf:<repo>\" or set HF_MODEL_NAME.")
+            _init_hf(repo_id)
+
+
+def get_completion(messages, model: Optional[str] = None):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            if model == "gpt-4o":
-                response = client.beta.chat.completions.parse(
-                    model=model,
-                    messages=messages,
-                    response_format=ResponseEvent,
+            chosen_model = (model or os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o")).strip()
+            # If user provided HF repo (hf: or bare repo id), use HF
+            if chosen_model.startswith("hf:") or "/" in chosen_model:
+                repo_id = chosen_model.split(":", 1)[1] if chosen_model.startswith("hf:") else chosen_model
+                if not repo_id:
+                    repo_id = os.environ.get("HF_MODEL_NAME", "")
+                if not repo_id:
+                    # minimal safe stub
+                    return ResponseEvent(
+                        epsiode_number=0,
+                        timestep=0,
+                        past_events="",
+                        current_facing_direction=MaterialType.GRASS,
+                        current_inventory=[],
+                        collaboration=Collaboration(
+                            target_agent_to_help=-1,
+                            target_agent_need=ShareableItems.NOT_APPLICABLE,
+                            help_method="",
+                            can_help_now=ResultType.IN_PROGRESS,
+                            being_helped_by_agent=-1,
+                            help_method_by_agent="",
+                            change_in_plan="",
+                        ),
+                        reflection=Reflection(
+                            vision=[],
+                            last_action=ActionType.noop,
+                            last_action_result=ResultType.SUCCESS,
+                            last_action_result_reflection="",
+                            last_action_repeated_reflection="",
+                        ),
+                        goal=Goal(
+                            ultimate_goal=LongTermGoalType.COLLECT_DIAMOND,
+                            long_term_goal=LongTermGoalType.COLLECT_DIAMOND,
+                            long_term_goal_subgoals="",
+                            long_term_goal_progress=GoalType.SHARE,
+                            long_term_goal_status=ResultType.IN_PROGRESS,
+                            current_goal=GoalType.SHARE,
+                            current_goal_reason="",
+                            current_goal_status=ResultType.IN_PROGRESS,
+                        ),
+                        action=NextAction(
+                            next_action=ActionType.noop,
+                            next_action_reason="",
+                            next_action_prerequisites_status=ResultType.SUCCESS,
+                            next_action_prerequisites="",
+                            final_next_action=ActionType.noop,
+                            final_next_action_reason="",
+                            final_next_action_status=ResultType.SUCCESS,
+                            final_target_material_to_collect=NavigationDestinationItems.GRASS,
+                            final_target_material_to_share=ShareableItems.NOT_APPLICABLE,
+                            final_target_agent_id=-1,
+                        ),
+                        summary="",
+                    )
+                raw_text = _hf_chat(messages, repo_id)
+                return ResponseEvent(
+                    epsiode_number=0,
+                    timestep=0,
+                    past_events="",
+                    current_facing_direction=MaterialType.GRASS,
+                    current_inventory=[],
+                    collaboration=Collaboration(
+                        target_agent_to_help=-1,
+                        target_agent_need=ShareableItems.NOT_APPLICABLE,
+                        help_method="",
+                        can_help_now=ResultType.IN_PROGRESS,
+                        being_helped_by_agent=-1,
+                        help_method_by_agent="",
+                        change_in_plan="",
+                    ),
+                    reflection=Reflection(
+                        vision=[],
+                        last_action=ActionType.noop,
+                        last_action_result=ResultType.SUCCESS,
+                        last_action_result_reflection="",
+                        last_action_repeated_reflection="",
+                    ),
+                    goal=Goal(
+                        ultimate_goal=LongTermGoalType.COLLECT_DIAMOND,
+                        long_term_goal=LongTermGoalType.COLLECT_DIAMOND,
+                        long_term_goal_subgoals="",
+                        long_term_goal_progress=GoalType.SHARE,
+                        long_term_goal_status=ResultType.IN_PROGRESS,
+                        current_goal=GoalType.SHARE,
+                        current_goal_reason="",
+                        current_goal_status=ResultType.IN_PROGRESS,
+                    ),
+                    action=NextAction(
+                        next_action=ActionType.noop,
+                        next_action_reason="",
+                        next_action_prerequisites_status=ResultType.SUCCESS,
+                        next_action_prerequisites="",
+                        final_next_action=ActionType.noop,
+                        final_next_action_reason="",
+                        final_next_action_status=ResultType.SUCCESS,
+                        final_target_material_to_collect=NavigationDestinationItems.GRASS,
+                        final_target_material_to_share=ShareableItems.NOT_APPLICABLE,
+                        final_target_agent_id=-1,
+                    ),
+                    summary=raw_text,
                 )
-                return response.choices[0].message.parsed
-            else:
-                raise ValueError("Model not found")
+
+            # Otherwise, use OpenAI chat.completions with chosen or default gpt-4o
+            openai_client = _init_openai()
+            if openai_client is not None:
+                resp = openai_client.chat.completions.create(model=chosen_model, messages=messages)
+                content = resp.choices[0].message.content or ""
+                return ResponseEvent(
+                    epsiode_number=0,
+                    timestep=0,
+                    past_events="",
+                    current_facing_direction=MaterialType.GRASS,
+                    current_inventory=[],
+                    collaboration=Collaboration(
+                        target_agent_to_help=-1,
+                        target_agent_need=ShareableItems.NOT_APPLICABLE,
+                        help_method="",
+                        can_help_now=ResultType.IN_PROGRESS,
+                        being_helped_by_agent=-1,
+                        help_method_by_agent="",
+                        change_in_plan="",
+                    ),
+                    reflection=Reflection(
+                        vision=[],
+                        last_action=ActionType.noop,
+                        last_action_result=ResultType.SUCCESS,
+                        last_action_result_reflection="",
+                        last_action_repeated_reflection="",
+                    ),
+                    goal=Goal(
+                        ultimate_goal=LongTermGoalType.COLLECT_DIAMOND,
+                        long_term_goal=LongTermGoalType.COLLECT_DIAMOND,
+                        long_term_goal_subgoals="",
+                        long_term_goal_progress=GoalType.SHARE,
+                        long_term_goal_status=ResultType.IN_PROGRESS,
+                        current_goal=GoalType.SHARE,
+                        current_goal_reason="",
+                        current_goal_status=ResultType.IN_PROGRESS,
+                    ),
+                    action=NextAction(
+                        next_action=ActionType.noop,
+                        next_action_reason="",
+                        next_action_prerequisites_status=ResultType.SUCCESS,
+                        next_action_prerequisites="",
+                        final_next_action=ActionType.noop,
+                        final_next_action_reason="",
+                        final_next_action_status=ResultType.SUCCESS,
+                        final_target_material_to_collect=NavigationDestinationItems.GRASS,
+                        final_target_material_to_share=ShareableItems.NOT_APPLICABLE,
+                        final_target_agent_id=-1,
+                    ),
+                    summary=content,
+                )
+            return ResponseEvent(
+                epsiode_number=0,
+                timestep=0,
+                past_events="",
+                current_facing_direction=MaterialType.GRASS,
+                current_inventory=[],
+                collaboration=Collaboration(
+                    target_agent_to_help=-1,
+                    target_agent_need=ShareableItems.NOT_APPLICABLE,
+                    help_method="",
+                    can_help_now=ResultType.IN_PROGRESS,
+                    being_helped_by_agent=-1,
+                    help_method_by_agent="",
+                    change_in_plan="",
+                ),
+                reflection=Reflection(
+                    vision=[],
+                    last_action=ActionType.noop,
+                    last_action_result=ResultType.SUCCESS,
+                    last_action_result_reflection="",
+                    last_action_repeated_reflection="",
+                ),
+                goal=Goal(
+                    ultimate_goal=LongTermGoalType.COLLECT_DIAMOND,
+                    long_term_goal=LongTermGoalType.COLLECT_DIAMOND,
+                    long_term_goal_subgoals="",
+                    long_term_goal_progress=GoalType.SHARE,
+                    long_term_goal_status=ResultType.IN_PROGRESS,
+                    current_goal=GoalType.SHARE,
+                    current_goal_reason="",
+                    current_goal_status=ResultType.IN_PROGRESS,
+                ),
+                action=NextAction(
+                    next_action=ActionType.noop,
+                    next_action_reason="",
+                    next_action_prerequisites_status=ResultType.SUCCESS,
+                    next_action_prerequisites="",
+                    final_next_action=ActionType.noop,
+                    final_next_action_reason="",
+                    final_next_action_status=ResultType.SUCCESS,
+                    final_target_material_to_collect=NavigationDestinationItems.GRASS,
+                    final_target_material_to_share=ShareableItems.NOT_APPLICABLE,
+                    final_target_agent_id=-1,
+                ),
+                summary="",
+            )
         except (APITimeoutError, TimeoutError) as e:
             if attempt < max_retries - 1:
                 print_color(f"Timeout occurred in get_completion, retrying in 10 seconds... (attempt {attempt+1})", color="yellow")
@@ -210,7 +513,10 @@ def get_completion(messages, model="gpt-4o"):
 
 class TextModel:
     def __init__(self):
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        try:
+            self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            self.tokenizer = None
         # self.tokenizer = None
     
     def __call__(self, text) -> Any:
@@ -221,10 +527,34 @@ class TextModel:
         return self.ada_embedding(normalized_text)
     
     def ada_embedding(self, text):
-        response = client.embeddings.create(input=[text], model="text-embedding")
-        return response.data[0].embedding
+        client = _init_azure()
+        if client is not None:
+            try:
+                # Try Azure embedding deployment name if provided
+                model_name = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding")
+                response = client.embeddings.create(input=[text], model=model_name)
+                return response.data[0].embedding
+            except Exception:
+                pass
+        openai_client = _init_openai()
+        if openai_client is not None:
+            try:
+                model_name = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+                response = openai_client.embeddings.create(input=[text], model=model_name)
+                return response.data[0].embedding
+            except Exception:
+                pass
+        # fallback: simple bag-of-words hash embedding
+        dim = 256
+        vec = [0.0] * dim
+        for tok in text.split():
+            vec[hash(tok) % dim] += 1.0
+        s = sum(vec) or 1.0
+        return [v / s for v in vec]
         # return ''
     def check_token_len(self, text):
+        if self.tokenizer is None:
+            return len(text)
         return len(self.tokenizer.encode(text))
         # return 0
         

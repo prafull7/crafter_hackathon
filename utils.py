@@ -464,6 +464,8 @@ def get_arg_parser():
                         help='Number of steps (default: 350).')
     parser.add_argument('--num_of_turn', type=int, default=1,
                         help='Number of simulation turns (default: 1).')
+    parser.add_argument('--model', type=str, default='gpt-4o',
+                        help='LLM model name. Use "gpt-4o" for Azure OpenAI or a HuggingFace repo id like "Qwen/Qwen2.5-7B-Instruct".')
     # Add more custom arguments here as needed
     return parser
 

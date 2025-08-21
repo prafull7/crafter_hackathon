@@ -3,6 +3,7 @@ from mimetypes import guess_type
 from PIL import Image
 import io
 from .constants import world_item_ids, walkables, MATERIALS, ACTIONS, GENERAL_DESCRIPTION, ENV_DESCRIPTION, RESPONSE_DESCRIPTION, VITALS
+import os
 from .pathfinding import PathFinding
 import crafter.constants as const
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -20,8 +21,15 @@ def local_image_to_data_url(image_path):
     return f"data:{mime_type};base64,{base64_encoded_data}"
 
 
-# read a image 
-textures = local_image_to_data_url("Your/path/to/textures.png")
+# read an image: resolve relative to current file's parent folder
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+_CANDIDATES = [
+    os.path.join(_CUR_DIR, 'textures.png'),
+    os.path.join(os.path.dirname(_CUR_DIR), 'textures.png'),
+    os.path.join(os.path.dirname(_CUR_DIR), 'assets', 'textures.png'),
+]
+_TEXTURES_PATH = next((p for p in _CANDIDATES if os.path.exists(p)), _CANDIDATES[0])
+textures = local_image_to_data_url(_TEXTURES_PATH)
 
 #load the text from the file
 def generate_inquiry(vision, description=""):

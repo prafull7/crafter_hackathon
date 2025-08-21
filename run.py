@@ -14,6 +14,7 @@ from memory_system.agent import Agent, HumanAgent
 from plot import Plotter
 import pandas as pd
 import os
+from memory_system.llm_api import init_model
 
 MAX_STEPS = 350
 N_PLAYERS = 6
@@ -137,6 +138,15 @@ def main():
     num_steps = args.step_num if hasattr(args, 'step_num') else 350
     human_agent_ids = args.human_agents if hasattr(args, 'human_agents') else None
     agent_num = args.agent_num if hasattr(args, 'agent_num') else 1
+    model_name = args.model if hasattr(args, 'model') else None
+
+    # Initialize chosen LLM backend
+    init_model(model_name)
+
+    # Resolve output directory relative to this file's parent folder
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    results_dir = os.path.join(current_dir, 'results')
+    os.makedirs(results_dir, exist_ok=True)
     all_stats = []
     for round_idx in range(num_rounds):
         print(f"=== Simulation Round {round_idx+1} ===")
@@ -145,12 +155,12 @@ def main():
         simulation = CompleteMulitAgentSimulation(agents, env, num_steps, agent_num)
         results_df = simulation.run_simulation()['stats_df']
         # Save stats, file name contains round number and agent number
-        save_path = f"/your/path/to/results/stats_round_{round_idx+1}_agent_{agent_num}.csv"
+        save_path = os.path.join(results_dir, f"stats_round_{round_idx+1}_agent_{agent_num}.csv")
         results_df.to_csv(save_path, index=False)
         all_stats.append(results_df)
     # combine all rounds results
     final_df = pd.concat(all_stats, ignore_index=True)
-    all_rounds_path = "/your/path/to/results/all_rounds_stats.csv"
+    all_rounds_path = os.path.join(results_dir, "all_rounds_stats.csv")
 
     # if file exists, append to it, otherwise create a new file
     final_df.to_csv(
@@ -161,7 +171,7 @@ def main():
     )
     print("Appended results to all_rounds_stats.csv")
     plotter = Plotter()
-    plotter.plot(['/your/path/to/results/all_rounds_stats.csv'], legend_labels=['Six Agents with Communication'])
+    plotter.plot([all_rounds_path], legend_labels=['Six Agents with Communication'])
 
 
 if __name__ == "__main__":
