@@ -466,6 +466,10 @@ def get_arg_parser():
                         help='Number of simulation turns (default: 1).')
     parser.add_argument('--model', type=str, default='gpt-4o',
                         help='LLM model name. Use "gpt-4o" for Azure OpenAI or a HuggingFace repo id like "Qwen/Qwen2.5-7B-Instruct".')
+    parser.add_argument('--agent_type', choices=['llm','ppo','hybrid'], default='llm',
+                        help='Choose controller type: "llm" (default), "ppo", or "hybrid".')
+    parser.add_argument('--ppo_policy', type=str, default='results/ppo/best_model.zip',
+                        help='Path to PPO policy file (.zip).')
     # Add more custom arguments here as needed
     return parser
 

@@ -25,13 +25,13 @@ from utils import AgentActionProcessor, EnvironmentManager, SimulationLogger, Ag
 class MultiViewGUI:
     """Multi-view GUI class with perspective switching"""
     
-    def __init__(self, human_agent_ids=None, n_players=3, max_steps=350):
+    def __init__(self, human_agent_ids=None, n_players=3, max_steps=350, agent_type='llm', policy_path=None):
         self.human_agent_ids = human_agent_ids or []
         self.n_players = n_players
         self.max_steps = max_steps
         
         # Initialize agents
-        self.agents = initialize_agents(human_agent_ids=human_agent_ids, n_players=n_players)
+        self.agents = initialize_agents(human_agent_ids=human_agent_ids, n_players=n_players, agent_type=agent_type, policy_path=policy_path)
         
         # Initialize environment
         self.env = crafter.Env(length=max_steps, n_players=n_players, seed=4)
@@ -694,6 +694,10 @@ def main():
                         help='Number of steps (default: 350)')
     parser.add_argument('--fps', type=int, default=5,
                         help='FPS for GUI (default: 5)')
+    parser.add_argument('--agent_type', choices=['llm','ppo','hybrid'], default='llm',
+                        help='Choose controller type: "llm" (default), "ppo", or "hybrid".')
+    parser.add_argument('--ppo_policy', type=str, default='results/ppo/best_model.zip',
+                        help='Path to PPO policy file (.zip).')
     
     args = parser.parse_args()
     
@@ -706,7 +710,9 @@ def main():
     gui = MultiViewGUI(
         human_agent_ids=human_agent_ids,
         n_players=args.agent_num,
-        max_steps=args.step_num
+        max_steps=args.step_num,
+        agent_type=args.agent_type,
+        policy_path=args.ppo_policy
     )
     gui.fps = args.fps
     gui.run()

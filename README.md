@@ -27,6 +27,11 @@ This project implements a sophisticated multi-agent system where AI agents colla
    
    # Activate environment
    conda activate mcrafter
+
+   # RL Dependencies:
+   pip install "gym==0.25.2"
+   pip install crafter
+   pip install --no-deps "stable-baselines3==1.8.0"
    ```
 
 2. **Basic Simulation**
@@ -36,12 +41,20 @@ This project implements a sophisticated multi-agent system where AI agents colla
    
    # Run with custom parameters
    python run.py --agent_num 3 --step_num 200
+
+   # Run with RL policy
+   python run.py --agent_num 3 --step_num 200 --agent_type ppo
+
+   # Train RL policy (basic version trained on low number of steps included with repository)
+   python rl/ppo_train.py --total-steps 1000000 --logdir results/ppo
    ```
 
 3. **GUI Interface**
    ```bash
    # Launch multi-view GUI
    python run_gui_multi_view.py --agent_num 4 --step_num 150
+   # Launch multi-view GUI with RL policy
+   python run_gui_multi_view.py --agent_num 4 --step_num 150 --agent_type ppo
    ```
 
 ## 🎮 Multi-View GUI Usage

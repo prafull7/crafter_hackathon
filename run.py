@@ -15,6 +15,19 @@ from plot import Plotter
 import pandas as pd
 import os
 from memory_system.llm_api import init_model
+from typing import List
+
+def _lazy_import_ppo_agent():
+    from memory_system.ppo_agent import PPOAgent
+    return PPOAgent
+
+# default Crafter action list (17 discrete actions)
+_PPO_ACTION_NAMES_DEFAULT: List[str] = [
+    "noop", "move_left", "move_right", "move_up", "move_down",
+    "do", "sleep", "place_table", "place_stone", "place_furnace", "place_plant",
+    "make_wood_pickaxe", "make_stone_pickaxe", "make_iron_pickaxe",
+    "Navigator", "share", "place_plant"
+]
 
 MAX_STEPS = 350
 N_PLAYERS = 6
@@ -110,7 +123,7 @@ class CompleteMulitAgentSimulation:
             for agent in self.agents
         ]
 
-def initialize_agents(human_agent_ids=None, n_players=None):
+def initialize_agents(human_agent_ids=None, n_players=None, agent_type=None, policy_path=None):
     if human_agent_ids is None:
         human_agent_ids = []
     elif isinstance(human_agent_ids, str) and human_agent_ids.strip():
@@ -118,11 +131,24 @@ def initialize_agents(human_agent_ids=None, n_players=None):
         human_agent_ids = [int(x.strip()) for x in human_agent_ids.split(',') if x.strip().isdigit()]
     elif not isinstance(human_agent_ids, list):
         human_agent_ids = []
+
+    action_names = _PPO_ACTION_NAMES_DEFAULT
+
     
     agents = []
     for i in range(n_players):
         if i in human_agent_ids:
             agents.append(HumanAgent(id=i, kg_update_freq=10))
+            continue
+
+        if agent_type == "ppo":
+            PPOAgent = _lazy_import_ppo_agent()
+            agents.append(PPOAgent(
+                id=i,
+                policy_path=policy_path,
+                action_names=action_names,
+                deterministic=True
+            ))
         else:
             agents.append(Agent(id=i, kg_update_freq=10))
     return agents
@@ -139,6 +165,8 @@ def main():
     human_agent_ids = args.human_agents if hasattr(args, 'human_agents') else None
     agent_num = args.agent_num if hasattr(args, 'agent_num') else 1
     model_name = args.model if hasattr(args, 'model') else None
+    agent_type = args.agent_type if hasattr(args, 'agent_type') else 'llm'
+    policy_path = args.ppo_policy if hasattr(args, 'ppo_policy') else 'results/ppo/best_model.zip'
 
     # Initialize chosen LLM backend
     init_model(model_name)
@@ -150,7 +178,7 @@ def main():
     all_stats = []
     for round_idx in range(num_rounds):
         print(f"=== Simulation Round {round_idx+1} ===")
-        agents = initialize_agents(human_agent_ids=human_agent_ids, n_players=agent_num)
+        agents = initialize_agents(human_agent_ids=human_agent_ids, n_players=agent_num, agent_type=agent_type, policy_path=policy_path)
         env = initialize_environment(num_steps=num_steps, n_players=agent_num)
         simulation = CompleteMulitAgentSimulation(agents, env, num_steps, agent_num)
         results_df = simulation.run_simulation()['stats_df']
