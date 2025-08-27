@@ -28,6 +28,10 @@ This project implements a sophisticated multi-agent system where AI agents colla
    # Activate environment
    conda activate mcrafter
 
+   # Log in to Hugging Face
+   pip install -U "huggingface_hub[cli]"
+   hf auth login
+
    # RL Dependencies:
    pip install "gym==0.25.2"
    pip install crafter
@@ -55,6 +59,21 @@ This project implements a sophisticated multi-agent system where AI agents colla
    python run_gui_multi_view.py --agent_num 4 --step_num 150
    # Launch multi-view GUI with RL policy
    python run_gui_multi_view.py --agent_num 4 --step_num 150 --agent_type ppo
+   ```
+
+4. **LLM Playground**
+   ```bash
+   export HF_HOME="<PATH_TO_HF_HOME>"
+   export HF_DATASETS_CACHE="<PATH_TO_HF_DATASETS_CACHE>"
+
+   export OPENAI_API_KEY="<PATH_TO_OPENAI_API_KEY>"
+   export OPENAI_CHAT_MODEL="<OPENAI_CHAT_MODEL>"
+
+   # For HF models, pass model="hf:<MODEL_REPO/MODEL_NAME>".
+   python run.py --agent_num 2 --step_num 2 --model "hf:deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+
+   ## Default model: gpt-4o from OpenAI
+   python run.py --agent_num 2 --step_num 2 
    ```
 
 ## 🎮 Multi-View GUI Usage
