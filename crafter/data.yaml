@@ -25,6 +25,7 @@ materials:
   - path
   - sand
   - tree
+  - apricot
   - lava
   - coal
   - iron
@@ -63,6 +64,7 @@ collect:
   diamond: {require: {iron_pickaxe: 1}, receive: {diamond: 1}, leaves: path}
   water: {require: {}, receive: {drink: 1}, leaves: water}
   grass: {require: {}, receive: {sapling: 1}, probability: 0.1, leaves: grass}
+  apricot: {require: {}, receive: {food: 1}, leaves: grass}
 
 place:
   stone: {uses: {stone: 1}, where: [grass, sand, path, water, lava], type: material}

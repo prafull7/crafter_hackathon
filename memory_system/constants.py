@@ -22,7 +22,7 @@ ACTIONS = ["noop", "move_left", "move_right",
                 "make_stone_pickaxe","make_iron_pickaxe","make_wood_sword",
                 "make_stone_sword","make_iron_sword", "Navigator"]
 MATERIALS = ["water", "grass", "stone", 
-                "path", "sand", "tree", 
+                "path", "sand", "tree", "apricot",
                 "lava", "coal", "iron", 
                 "diamond", "table", "furnace", 'cow']
 VITALS = ["health", "food", "drink", "energy"]

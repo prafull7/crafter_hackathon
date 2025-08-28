@@ -8,6 +8,8 @@ from typing import Union, Literal, Optional
 import time
 from openai import APITimeoutError
 import os
+import re
+import json
 
 _HF_PIPELINE = None
 _HF_TOKENIZER = None
@@ -22,6 +24,7 @@ DEFAULT_MODEL = "gpt-4"
 # Lazily initialize Azure client only if environment is configured
 _AZURE_CLIENT = None
 
+
 def _azure_configured() -> bool:
     return bool(
         os.environ.get("AZURE_OPENAI_ENDPOINT")
@@ -29,8 +32,10 @@ def _azure_configured() -> bool:
         and os.environ.get("AZURE_OPENAI_API_VERSION")
     )
 
+
 def _openai_configured() -> bool:
     return bool(os.environ.get("OPENAI_API_KEY"))
+
 
 def _init_azure():
     global _AZURE_CLIENT
@@ -48,7 +53,9 @@ def _init_azure():
     )
     return _AZURE_CLIENT
 
+
 _OPENAI_CLIENT = None
+
 
 def _init_openai():
     global _OPENAI_CLIENT
@@ -59,13 +66,16 @@ def _init_openai():
     _OPENAI_CLIENT = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     return _OPENAI_CLIENT
 
+
 from enum import Enum
+
 
 class ResultType(str, Enum):
     SUCCESS = "success"
     FAILURE = "failure"
     IN_PROGRESS = "in_progress"
-    
+
+
 class ActionType(str, Enum):
     noop = "noop"
     move_left = "move_left"
@@ -83,7 +93,8 @@ class ActionType(str, Enum):
     make_iron_pickaxe = "make_iron_pickaxe"
     Navigator = "Navigator"
     share = "share"
-    
+
+
 class GoalType(str, Enum):
     COLLECT_WOOD = "collect_wood"
     MAKE_WOOD_PICKAXE = "make_wood_pickaxe"
@@ -92,11 +103,12 @@ class GoalType(str, Enum):
     COLLECT_IRON = "collect_iron"
     MAKE_IRON_PICKAXE = "make_iron_pickaxe"
     COLLECT_DIAMOND = "collect_diamond"
-    
+
     PLACE_TABLE = "place_table"
     PLACE_FURNACE = "place_furnace"
     COLLECT_COAL = "collect_coal"
     SHARE = "share"
+
 
 class LongTermGoalType(str, Enum):
     MAKE_WOOD_PICKAXE = "make_wood_pickaxe"
@@ -106,7 +118,8 @@ class LongTermGoalType(str, Enum):
     PLACE_FURNACE = "place_furnace"
     COLLECT_DIAMOND = "collect_diamond"
     HELP_AGENT = "help_agent"
-    
+
+
 class MaterialType(str, Enum):
     TABLE = "table"
     FURNACE = "furnace"
@@ -119,26 +132,45 @@ class MaterialType(str, Enum):
     COAL = "coal"
     IRON = "iron"
     DIAMOND = "diamond"
-    
+
+
 class Reflection(BaseModel):
-    vision: list[MaterialType] = Field(description="List of materials you see around you.")
-    last_action: ActionType #= Field(description="Your last action.")
+    vision: list[MaterialType] = Field(
+        description="List of materials you see around you."
+    )
+    last_action: ActionType  # = Field(description="Your last action.")
     last_action_result: ResultType
-    last_action_result_reflection: str #= Field(description="Reflection on the last action.")
-    last_action_repeated_reflection: str = Field(description="Did you repeat the last action? If so, why?")
+    last_action_result_reflection: (
+        str  # = Field(description="Reflection on the last action.")
+    )
+    last_action_repeated_reflection: str = Field(
+        description="Did you repeat the last action? If so, why?"
+    )
+
 
 class Goal(BaseModel):
     ultimate_goal: LongTermGoalType = Field(description="What is your ultimate goal?")
-    
-    long_term_goal: LongTermGoalType = Field(description="Working towards the ultimate goal, what should be your next goal?")
-    long_term_goal_subgoals: str = Field(Description="What are the subgoals to complete the long term goal?")
-    long_term_goal_progress: GoalType = Field(Description="What is the progress of the long term goal?")
+
+    long_term_goal: LongTermGoalType = Field(
+        description="Working towards the ultimate goal, what should be your next goal?"
+    )
+    long_term_goal_subgoals: str = Field(
+        Description="What are the subgoals to complete the long term goal?"
+    )
+    long_term_goal_progress: GoalType = Field(
+        Description="What is the progress of the long term goal?"
+    )
     long_term_goal_status: ResultType
-    
-    current_goal: GoalType = Field(description="The current goal that you are working on.")
-    current_goal_reason: str #= Field(description="Why do you choose the current goal?")
+
+    current_goal: GoalType = Field(
+        description="The current goal that you are working on."
+    )
+    current_goal_reason: (
+        str  # = Field(description="Why do you choose the current goal?")
+    )
     current_goal_status: ResultType
-    
+
+
 class NavigationDestinationItems(str, Enum):
     TREE = "tree"
     WATER = "water"
@@ -147,11 +179,13 @@ class NavigationDestinationItems(str, Enum):
     DIAMOND = "diamond"
     COAL = "coal"
     GRASS = "grass"
+    APRICOT = "apricot"
     # COW = 'cow'
     TABLE = "table"
     FURNACE = "furnace"
     NOT_APPICABLE = "not_applicable"
-    
+
+
 class ShareableItems(str, Enum):
     WOOD = "wood"
     STONE = "stone"
@@ -165,6 +199,7 @@ class ShareableItems(str, Enum):
     # water
     NOT_APPLICABLE = "not_applicable"
 
+
 class InventoryItems(str, Enum):
     WOOD = "wood"
     STONE = "stone"
@@ -174,55 +209,96 @@ class InventoryItems(str, Enum):
     WOOD_PICKAXE = "wood_pickaxe"
     STONE_PICKAXE = "stone_pickaxe"
     IRON_PICKAXE = "iron_pickaxe"
- 
+
+
 class InventoryItemsCount(BaseModel):
     item: InventoryItems
     count: int
 
+
 # Model for planning the next action
 class NextAction(BaseModel):
-    next_action: ActionType = Field(description="What is the next action you plan to take?")
-    next_action_reason: str # = Field(description="Why do you think this shoud be the next action?")
-    next_action_prerequisites_status: ResultType = Field(description="Are the prerequisites met?")
-    next_action_prerequisites: str = Field(description="What prerequisites are not met?")
-    final_next_action: ActionType = Field(description="What is your final decision on next action.")
-    final_next_action_reason: str # = Field(description="Reason for choosing this action.")
-    final_next_action_status: ResultType # = Field(description="What is the status of the final decision?")
-    final_target_material_to_collect: NavigationDestinationItems = Field(description="Navigate to where?")
+    next_action: ActionType = Field(
+        description="What is the next action you plan to take?"
+    )
+    next_action_reason: (
+        str  # = Field(description="Why do you think this shoud be the next action?")
+    )
+    next_action_prerequisites_status: ResultType = Field(
+        description="Are the prerequisites met?"
+    )
+    next_action_prerequisites: str = Field(
+        description="What prerequisites are not met?"
+    )
+    final_next_action: ActionType = Field(
+        description="What is your final decision on next action."
+    )
+    final_next_action_reason: (
+        str  # = Field(description="Reason for choosing this action.")
+    )
+    final_next_action_status: (
+        ResultType  # = Field(description="What is the status of the final decision?")
+    )
+    final_target_material_to_collect: NavigationDestinationItems = Field(
+        description="Navigate to where?"
+    )
     final_target_material_to_share: ShareableItems = Field(description="Share what?")
-    final_target_agent_id: int = Field(description="Which agent to share with, if applicable, or return -1.")
-    
+    final_target_agent_id: int = Field(
+        description="Which agent to share with, if applicable, or return -1."
+    )
+
+
 class Collaboration(BaseModel):
-    target_agent_to_help: int = Field(description="Which agent should you help, if applicable?")
-    target_agent_need: ShareableItems = Field(description="What does the target agent need, if applicable?")
-    help_method: str = Field(description="What can you do to help the agent, if applicable?")
-    can_help_now: ResultType = Field(description="Can you help the agent now? Do you have the resources in inventory?")
-    being_helped_by_agent: int = Field(description="Which agent is helping you, if applicable?")
-    help_method_by_agent: str = Field(description="What is the agent doing to help you, if applicable?")
-    change_in_plan: str = Field(description="How does the help from the agent change your plan, if applicable?")
-    
+    target_agent_to_help: int = Field(
+        description="Which agent should you help, if applicable?"
+    )
+    target_agent_need: ShareableItems = Field(
+        description="What does the target agent need, if applicable?"
+    )
+    help_method: str = Field(
+        description="What can you do to help the agent, if applicable?"
+    )
+    can_help_now: ResultType = Field(
+        description="Can you help the agent now? Do you have the resources in inventory?"
+    )
+    being_helped_by_agent: int = Field(
+        description="Which agent is helping you, if applicable?"
+    )
+    help_method_by_agent: str = Field(
+        description="What is the agent doing to help you, if applicable?"
+    )
+    change_in_plan: str = Field(
+        description="How does the help from the agent change your plan, if applicable?"
+    )
+
+
 class ResponseEvent(BaseModel):
     epsiode_number: int = Field(Description="What is the current episode?")
     timestep: int = Field(Description="What is the current timestep in the episode?")
-    past_events: str = Field(Description="Briefly describe the past events in the episode.")
+    past_events: str = Field(
+        Description="Briefly describe the past events in the episode."
+    )
     current_facing_direction: MaterialType
-    current_inventory: list[InventoryItemsCount] = Field(Description="What is in your current inventory? Only list items with item count greater than 0.")
+    current_inventory: list[InventoryItemsCount] = Field(
+        Description="What is in your current inventory? Only list items with item count greater than 0."
+    )
     collaboration: Collaboration
     reflection: Reflection
     goal: Goal
     action: NextAction
-    summary: str = Field(Description=(
-                                "Summarize the episode, including the timestep, long-term goal, progress, significant events, and plan. "
-                                "Explain your actions, the rationale behind your decisions. Treat as if you have done the next actions aleardy. Explain your intended support for other agents (if applicable). What should come next?"
-                                "Keep the summary concise and focused on key information, using *past tense* for everything as it serves as a note for future reference. Use clear and plain language. "
-                                "Use PAST TENSE!!!\n"
-"""
+    summary: str = Field(
+        Description=(
+            "Summarize the episode, including the timestep, long-term goal, progress, significant events, and plan. "
+            "Explain your actions, the rationale behind your decisions. Treat as if you have done the next actions aleardy. Explain your intended support for other agents (if applicable). What should come next?"
+            "Keep the summary concise and focused on key information, using *past tense* for everything as it serves as a note for future reference. Use clear and plain language. "
+            "Use PAST TENSE!!!\n"
+            """
 Template:
 This is agent [...]. In Episode: [...] ; Timestep: [...]. My inventory contained [...]. In the past, I successfully [...]; I failed to [...]. On collaboration, [...].
 I [current action: made/placed/navigated/ate/shared] a [current object] because [...]. This action succeeded/failed/was in progress, becuase it does not exist in my inventory. I planned to work towards [goal] because [...].
 """
-                           )
-                        )
+        )
+    )
     #                         "Ssummrize the episode,"
     #                         "including timestep, long term goal, your progress, what happened in the past, and plan. "
     #                         "Include how you plan to help the other agent, if applicable."
@@ -231,14 +307,237 @@ I [current action: made/placed/navigated/ate/shared] a [current object] because 
     #                         "Be clear and concise and include the most important information."
     #                         "The whole summary act as a note for the next episode, so use past tense for everything; Avoid using 'next' to describe action because it would be done by next time step.")
     # )
-    
+
+
+def _default_response_event(
+    next_action: ActionType = ActionType.noop,
+    reason: str = "",
+    collect: NavigationDestinationItems = NavigationDestinationItems.GRASS,
+    share: ShareableItems = ShareableItems.NOT_APPLICABLE,
+    target_id: int = -1,
+    summary: str = "",
+):
+    return ResponseEvent(
+        epsiode_number=0,
+        timestep=0,
+        past_events="",
+        current_facing_direction=MaterialType.GRASS,
+        current_inventory=[],
+        collaboration=Collaboration(
+            target_agent_to_help=-1,
+            target_agent_need=ShareableItems.NOT_APPLICABLE,
+            help_method="",
+            can_help_now=ResultType.IN_PROGRESS,
+            being_helped_by_agent=-1,
+            help_method_by_agent="",
+            change_in_plan="",
+        ),
+        reflection=Reflection(
+            vision=[],
+            last_action=ActionType.noop,
+            last_action_result=ResultType.SUCCESS,
+            last_action_result_reflection="",
+            last_action_repeated_reflection="",
+        ),
+        goal=Goal(
+            ultimate_goal=LongTermGoalType.COLLECT_DIAMOND,
+            long_term_goal=LongTermGoalType.COLLECT_DIAMOND,
+            long_term_goal_subgoals="",
+            long_term_goal_progress=GoalType.SHARE,
+            long_term_goal_status=ResultType.IN_PROGRESS,
+            current_goal=GoalType.SHARE,
+            current_goal_reason="",
+            current_goal_status=ResultType.IN_PROGRESS,
+        ),
+        action=NextAction(
+            next_action=next_action,
+            next_action_reason=reason,
+            next_action_prerequisites_status=ResultType.SUCCESS,
+            next_action_prerequisites="",
+            final_next_action=next_action,
+            final_next_action_reason=reason,
+            final_next_action_status=ResultType.SUCCESS,
+            final_target_material_to_collect=collect,
+            final_target_material_to_share=share,
+            final_target_agent_id=target_id,
+        ),
+        summary=summary,
+    )
+
+
+_ACTION_ALIASES = {
+    "noop": ActionType.noop,
+    "no_op": ActionType.noop,
+    "do_nothing": ActionType.noop,
+    "move_left": ActionType.move_left,
+    "left": ActionType.move_left,
+    "move_right": ActionType.move_right,
+    "right": ActionType.move_right,
+    "move_up": ActionType.move_up,
+    "up": ActionType.move_up,
+    "move_down": ActionType.move_down,
+    "down": ActionType.move_down,
+    "do": ActionType.do,
+    "interact": ActionType.do,
+    "sleep": ActionType.sleep,
+    "place_table": ActionType.place_table,
+    "place_stone": ActionType.place_stone,
+    "place_furnace": ActionType.place_furnace,
+    "place_plant": ActionType.place_plant,
+    "make_wood_pickaxe": ActionType.make_wood_pickaxe,
+    "make_stone_pickaxe": ActionType.make_stone_pickaxe,
+    "make_iron_pickaxe": ActionType.make_iron_pickaxe,
+    "navigator": ActionType.Navigator,
+    "navigate": ActionType.Navigator,
+    "share": ActionType.share,
+}
+
+_NAV_ALIASES = {
+    k.lower(): v
+    for k, v in {
+        "tree": NavigationDestinationItems.TREE,
+        "water": NavigationDestinationItems.WATER,
+        "stone": NavigationDestinationItems.STONE,
+        "iron": NavigationDestinationItems.IRON,
+        "diamond": NavigationDestinationItems.DIAMOND,
+        "coal": NavigationDestinationItems.COAL,
+        "grass": NavigationDestinationItems.GRASS,
+        "apricot": NavigationDestinationItems.APRICOT,
+        "table": NavigationDestinationItems.TABLE,
+        "furnace": NavigationDestinationItems.FURNACE,
+        "not_applicable": NavigationDestinationItems.NOT_APPICABLE,
+    }.items()
+}
+
+
+def _parse_text_to_response_event(text: str) -> ResponseEvent:
+    # Try JSON first
+    try:
+        json_str = None
+        matches = re.findall(r"\{[\s\S]*?\}", text)
+        if matches:
+            json_str = max(matches, key=len)
+        if json_str:
+            data = json.loads(json_str)
+            # Flatten possible dotted keys and normalize
+            flat = {str(k).lower(): v for k, v in data.items()}
+            if isinstance(data.get("action"), dict):
+                for k, v in data["action"].items():
+                    flat[f"action.{str(k).lower()}"] = v
+            # Extract action
+            act_candidates = [
+                flat.get("final_next_action"),
+                flat.get("next_action"),
+                flat.get("action.final_next_action"),
+                flat.get("action.final__action"),
+                flat.get("action.final_action"),
+                flat.get("action"),
+            ]
+            act_raw = next(
+                (str(a).strip().lower() for a in act_candidates if a is not None),
+                "noop",
+            )
+            act = _ACTION_ALIASES.get(act_raw, ActionType.noop)
+            # Extract navigation target
+            mat_candidates = [
+                flat.get("final_target_material_to_collect"),
+                flat.get("action.final_target_material_to_collect"),
+                flat.get("navigate_to"),
+                flat.get("action.navigate_to"),
+            ]
+            mat_raw = next(
+                (str(m).strip().lower() for m in mat_candidates if m is not None),
+                "not_applicable",
+            )
+            mat = _NAV_ALIASES.get(mat_raw, NavigationDestinationItems.GRASS)
+            share_raw = (
+                str(
+                    flat.get("final_target_material_to_share")
+                    or flat.get("action.final_target_material_to_share")
+                    or "not_applicable"
+                )
+                .strip()
+                .lower()
+            )
+            share = (
+                ShareableItems(share_raw)
+                if share_raw in {s.value for s in ShareableItems}
+                else ShareableItems.NOT_APPLICABLE
+            )
+            try:
+                target_id = int(
+                    flat.get("final_target_agent_id")
+                    or flat.get("action.final_target_agent_id")
+                    or -1
+                )
+            except Exception:
+                target_id = -1
+            # If still noop and the raw text hints navigator, fallback to heuristic
+            if act == ActionType.noop and "navigator" in text.lower():
+                act = ActionType.Navigator
+            return _default_response_event(
+                act, "parsed_json", mat, share, target_id, summary=text
+            )
+    except Exception:
+        pass
+
+    # Heuristic parsing
+    lowered = text.lower()
+    chosen = ActionType.noop
+    for key in [
+        "navigator",
+        "navigate",
+        "move_left",
+        "move_right",
+        "move_up",
+        "move_down",
+        "sleep",
+        "do",
+        "place_table",
+        "place_furnace",
+        "place_stone",
+        "place_plant",
+        "share",
+    ]:
+        if key in lowered:
+            chosen = _ACTION_ALIASES.get(key, ActionType.noop)
+            break
+
+    # navigation target
+    mat = NavigationDestinationItems.GRASS
+    m = re.search(r"navigate(?:\s+to)?\s+(?:a|an|the)?\s*([a-z_]+)", lowered)
+    if m:
+        mat = _NAV_ALIASES.get(m.group(1), mat)
+
+    # target agent id if any
+    target_id = -1
+    m2 = re.search(r"agent\s+(\d+)", lowered)
+    if m2:
+        try:
+            target_id = int(m2.group(1))
+        except Exception:
+            target_id = -1
+
+    return _default_response_event(
+        chosen,
+        "parsed_text",
+        mat,
+        ShareableItems.NOT_APPLICABLE,
+        target_id,
+        summary=text,
+    )
+
+
 def _init_hf(model_name: str):
     global _HF_PIPELINE, _HF_TOKENIZER
     if _HF_PIPELINE is not None:
         return
     try:
         from transformers import AutoTokenizer, pipeline
-        _HF_TOKENIZER = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+        _HF_TOKENIZER = AutoTokenizer.from_pretrained(
+            model_name, trust_remote_code=True
+        )
         _HF_PIPELINE = pipeline(
             "text-generation",
             model=model_name,
@@ -278,8 +577,7 @@ def _hf_chat(messages, model_name: str):
             user_parts.append(str(content))
     prompt = "\n".join(["\n".join(system_parts), "\n".join(user_parts)]).strip()
     outputs = _HF_PIPELINE(prompt, **_HF_GENERATION_KWARGS)
-    import pdb; pdb.set_trace()
-    return outputs[0]["generated_text"][len(prompt):].strip()
+    return outputs[0]["generated_text"][len(prompt) :].strip()
 
 
 def init_model(model_name: Optional[str]):
@@ -292,11 +590,17 @@ def init_model(model_name: Optional[str]):
     if model_name and model_name != DEFAULT_MODEL:
         DEFAULT_MODEL = model_name
         if model_name.startswith("hf:") or "/" in model_name:
-            repo_id = model_name.split(":", 1)[1] if model_name.startswith("hf:") else model_name
+            repo_id = (
+                model_name.split(":", 1)[1]
+                if model_name.startswith("hf:")
+                else model_name
+            )
             if repo_id == "":
                 repo_id = os.environ.get("HF_MODEL_NAME", "")
                 if not repo_id:
-                    raise ValueError("HF model not specified. Pass model=\"hf:<repo>\" or set HF_MODEL_NAME.")
+                    raise ValueError(
+                        'HF model not specified. Pass model="hf:<repo>" or set HF_MODEL_NAME.'
+                    )
             _init_hf(repo_id)
 
 
@@ -304,10 +608,16 @@ def get_completion(messages, model: Optional[str] = None):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            chosen_model = (model or os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o")).strip()
+            chosen_model = (
+                model or os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o")
+            ).strip()
             # If user provided HF repo (hf: or bare repo id), use HF
             if chosen_model.startswith("hf:") or "/" in chosen_model:
-                repo_id = chosen_model.split(":", 1)[1] if chosen_model.startswith("hf:") else chosen_model
+                repo_id = (
+                    chosen_model.split(":", 1)[1]
+                    if chosen_model.startswith("hf:")
+                    else chosen_model
+                )
                 if not repo_id:
                     repo_id = os.environ.get("HF_MODEL_NAME", "")
                 if not repo_id:
@@ -359,104 +669,16 @@ def get_completion(messages, model: Optional[str] = None):
                         summary="",
                     )
                 raw_text = _hf_chat(messages, repo_id)
-                return ResponseEvent(
-                    epsiode_number=0,
-                    timestep=0,
-                    past_events="",
-                    current_facing_direction=MaterialType.GRASS,
-                    current_inventory=[],
-                    collaboration=Collaboration(
-                        target_agent_to_help=-1,
-                        target_agent_need=ShareableItems.NOT_APPLICABLE,
-                        help_method="",
-                        can_help_now=ResultType.IN_PROGRESS,
-                        being_helped_by_agent=-1,
-                        help_method_by_agent="",
-                        change_in_plan="",
-                    ),
-                    reflection=Reflection(
-                        vision=[],
-                        last_action=ActionType.noop,
-                        last_action_result=ResultType.SUCCESS,
-                        last_action_result_reflection="",
-                        last_action_repeated_reflection="",
-                    ),
-                    goal=Goal(
-                        ultimate_goal=LongTermGoalType.COLLECT_DIAMOND,
-                        long_term_goal=LongTermGoalType.COLLECT_DIAMOND,
-                        long_term_goal_subgoals="",
-                        long_term_goal_progress=GoalType.SHARE,
-                        long_term_goal_status=ResultType.IN_PROGRESS,
-                        current_goal=GoalType.SHARE,
-                        current_goal_reason="",
-                        current_goal_status=ResultType.IN_PROGRESS,
-                    ),
-                    action=NextAction(
-                        next_action=ActionType.noop,
-                        next_action_reason="",
-                        next_action_prerequisites_status=ResultType.SUCCESS,
-                        next_action_prerequisites="",
-                        final_next_action=ActionType.noop,
-                        final_next_action_reason="",
-                        final_next_action_status=ResultType.SUCCESS,
-                        final_target_material_to_collect=NavigationDestinationItems.GRASS,
-                        final_target_material_to_share=ShareableItems.NOT_APPLICABLE,
-                        final_target_agent_id=-1,
-                    ),
-                    summary=raw_text,
-                )
+                return _parse_text_to_response_event(raw_text)
 
             # Otherwise, use OpenAI chat.completions with chosen or default gpt-4o
             openai_client = _init_openai()
             if openai_client is not None:
-                resp = openai_client.chat.completions.create(model=chosen_model, messages=messages)
-                content = resp.choices[0].message.content or ""
-                return ResponseEvent(
-                    epsiode_number=0,
-                    timestep=0,
-                    past_events="",
-                    current_facing_direction=MaterialType.GRASS,
-                    current_inventory=[],
-                    collaboration=Collaboration(
-                        target_agent_to_help=-1,
-                        target_agent_need=ShareableItems.NOT_APPLICABLE,
-                        help_method="",
-                        can_help_now=ResultType.IN_PROGRESS,
-                        being_helped_by_agent=-1,
-                        help_method_by_agent="",
-                        change_in_plan="",
-                    ),
-                    reflection=Reflection(
-                        vision=[],
-                        last_action=ActionType.noop,
-                        last_action_result=ResultType.SUCCESS,
-                        last_action_result_reflection="",
-                        last_action_repeated_reflection="",
-                    ),
-                    goal=Goal(
-                        ultimate_goal=LongTermGoalType.COLLECT_DIAMOND,
-                        long_term_goal=LongTermGoalType.COLLECT_DIAMOND,
-                        long_term_goal_subgoals="",
-                        long_term_goal_progress=GoalType.SHARE,
-                        long_term_goal_status=ResultType.IN_PROGRESS,
-                        current_goal=GoalType.SHARE,
-                        current_goal_reason="",
-                        current_goal_status=ResultType.IN_PROGRESS,
-                    ),
-                    action=NextAction(
-                        next_action=ActionType.noop,
-                        next_action_reason="",
-                        next_action_prerequisites_status=ResultType.SUCCESS,
-                        next_action_prerequisites="",
-                        final_next_action=ActionType.noop,
-                        final_next_action_reason="",
-                        final_next_action_status=ResultType.SUCCESS,
-                        final_target_material_to_collect=NavigationDestinationItems.GRASS,
-                        final_target_material_to_share=ShareableItems.NOT_APPLICABLE,
-                        final_target_agent_id=-1,
-                    ),
-                    summary=content,
+                resp = openai_client.chat.completions.create(
+                    model=chosen_model, messages=messages
                 )
+                content = resp.choices[0].message.content or ""
+                return _parse_text_to_response_event(content)
             return ResponseEvent(
                 epsiode_number=0,
                 timestep=0,
@@ -505,11 +727,18 @@ def get_completion(messages, model: Optional[str] = None):
             )
         except (APITimeoutError, TimeoutError) as e:
             if attempt < max_retries - 1:
-                print_color(f"Timeout occurred in get_completion, retrying in 10 seconds... (attempt {attempt+1})", color="yellow")
+                print_color(
+                    f"Timeout occurred in get_completion, retrying in 10 seconds... (attempt {attempt+1})",
+                    color="yellow",
+                )
                 time.sleep(10)
             else:
-                print_color("Timeout occurred in get_completion, max retries reached.", color="red")
+                print_color(
+                    "Timeout occurred in get_completion, max retries reached.",
+                    color="red",
+                )
                 raise
+
 
 class TextModel:
     def __init__(self):
@@ -518,20 +747,25 @@ class TextModel:
         except Exception:
             self.tokenizer = None
         # self.tokenizer = None
-    
+
     def __call__(self, text) -> Any:
         normalized_text = self.nomralize(text)
         token_len = self.check_token_len(text)
         if token_len > 8192:
-            print_color(f"TextEmbbeding Warning: The token length of the text is {token_len}, it may cause the model to fail to generate the response.", color="red")
+            print_color(
+                f"TextEmbbeding Warning: The token length of the text is {token_len}, it may cause the model to fail to generate the response.",
+                color="red",
+            )
         return self.ada_embedding(normalized_text)
-    
+
     def ada_embedding(self, text):
         client = _init_azure()
         if client is not None:
             try:
                 # Try Azure embedding deployment name if provided
-                model_name = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding")
+                model_name = os.environ.get(
+                    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding"
+                )
                 response = client.embeddings.create(input=[text], model=model_name)
                 return response.data[0].embedding
             except Exception:
@@ -539,8 +773,12 @@ class TextModel:
         openai_client = _init_openai()
         if openai_client is not None:
             try:
-                model_name = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-                response = openai_client.embeddings.create(input=[text], model=model_name)
+                model_name = os.environ.get(
+                    "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
+                )
+                response = openai_client.embeddings.create(
+                    input=[text], model=model_name
+                )
                 return response.data[0].embedding
             except Exception:
                 pass
@@ -552,19 +790,20 @@ class TextModel:
         s = sum(vec) or 1.0
         return [v / s for v in vec]
         # return ''
+
     def check_token_len(self, text):
         if self.tokenizer is None:
             return len(text)
         return len(self.tokenizer.encode(text))
         # return 0
-        
+
     @staticmethod
     def nomralize(s) -> Any:
-        s = re.sub(r'\s+',  ' ', s).strip()
-        s = re.sub(r". ,","",s)
+        s = re.sub(r"\s+", " ", s).strip()
+        s = re.sub(r". ,", "", s)
         # remove all instances of multiple spaces
-        s = s.replace("..",".")
-        s = s.replace(". .",".")
+        s = s.replace("..", ".")
+        s = s.replace(". .", ".")
         s = s.replace("\n", "")
         s = s.strip()
         return s
